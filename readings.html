@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Last 12 Sensor Readings</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
+    table {
+      border-collapse: collapse;
+      margin: auto;
+      table-layout: fixed;
+    }
+    th, td {
+      border: 1px solid #aaa;
+      padding: 8px;
+      width: 120px;
+      word-wrap: break-word;
+    }
+    th {
+      background-color: #f0f0f0;
+    }
+  </style>
+</head>
+<body>
+  <h2>Last 12 Sensor Readings</h2>
+  <table id="sensorTable">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Time</th>
+        <th>Temperature (°C)</th>
+        <th>Estimated Depth from MLLW (ft)</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const spotterApiUrl = "https://api.sofarocean.com/api/sensor-data?token=9e6f543925aa67c2fccb303a90e5e5&spotterId=SPOT-31425C";
+    const noaaApiUrl = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?date=latest&station=8575512&product=air_pressure&datum=MLLW&time_zone=gmt&units=metric&application=DataAPI_Sample&format=xml";
+    let noaaPressure = null;
+
+    function hexToUtf8(hex) {
+      try {
+        const bytes = hex.match(/.{1,2}/g).map(b => parseInt(b, 16));
+        return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+      } catch {
+        return "";
+      }
+    }
+
+    function parseValue(valueHex) {
+      const decoded = hexToUtf8(valueHex);
+      const [temperature, pressure] = decoded.split(',');
+      return {
+        temperature: temperature ? parseFloat(temperature.trim()) : null,
+        pressure: pressure ? parseFloat(pressure.trim()) : null
+      };
+    }
+
+    function fetchNOAAPressure() {
+      return fetch(noaaApiUrl)
+        .then(res => res.text())
+        .then(xml => {
+          const match = xml.match(/v="([\d.]+)"/);
+          if (match) noaaPressure = parseFloat(match[1]);
+        });
+    }
+
+    function fetchSpotterData() {
+      return fetch(spotterApiUrl)
+        .then(res => res.json())
+        .then(data => {
+          const entries = data.data.slice(-12);
+          const rows = [];
+
+          entries.forEach(entry => {
+            const val = parseValue(entry.value || '');
+            const dateObj = new Date(entry.timestamp);
+            const localDate = dateObj.toLocaleDateString();
+            const localTime = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            const temp = val.temperature !== null ? val.temperature.toFixed(1) : 'N/A';
+
+            let depth = 'N/A';
+            if (val.pressure !== null && noaaPressure !== null) {
+              const diff = val.pressure - noaaPressure;
+              depth = ((diff * 0.03345) - 2.00).toFixed(2);
+            }
+
+            rows.push([localDate, localTime, temp, depth]);
+          });
+
+          populateTable(rows);
+        });
+    }
+
+    function populateTable(rows) {
+      const tbody = document.querySelector("#sensorTable tbody");
+      rows.forEach(row => {
+        const tr = document.createElement("tr");
+        row.forEach(cell => {
+          const td = document.createElement("td");
+          td.textContent = cell;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    fetchNOAAPressure().then(fetchSpotterData);
+  </script>
+</body>
+</html>
