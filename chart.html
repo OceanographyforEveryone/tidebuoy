@@ -67,7 +67,7 @@
 
             if (parsed.pressureRaw !== null && noaaPressure !== null) {
               const delta = parsed.pressureRaw - noaaPressure;
-              const adjustedDepth = (delta * 0.03345) - 2.00;
+              const adjustedDepth = (delta * 0.03345) - 1.80;
               depth = adjustedDepth.toFixed(2);
             }
 
