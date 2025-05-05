@@ -85,7 +85,7 @@
             let depth = 'N/A';
             if (val.pressure !== null && noaaPressure !== null) {
               const diff = val.pressure - noaaPressure;
-              depth = ((diff * 0.03345) - 2.00).toFixed(2);
+              depth = ((diff * 0.03345) - 1.80).toFixed(2);
             }
 
             rows.push([localDate, localTime, temp, depth]);
