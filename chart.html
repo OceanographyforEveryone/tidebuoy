@@ -13,127 +13,189 @@
 </head>
 <body>
 
-  <h1>Honeymoon Lagoon Tides (Last 24 Hours)</h1>
-  <!-- <h2>Currently Undergoing Maintenance</h2> -->
+  <h1>Honeymoon Lagoon Tides</h1>
 
   <canvas id="tideChart"></canvas>
 
+  <!-- Chart.js & Time Adapter -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@1.4.0/dist/chartjs-plugin-annotation.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/moment@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@1.4.0"></script>
 
   <script>
-    const spotterApiUrl = "https://api.sofarocean.com/api/sensor-data?token=9e6f543925aa67c2fccb303a90e5e5&spotterId=SPOT-31425C";
-    const noaaApiUrl = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?date=latest&station=8575512&product=air_pressure&datum=MLLW&time_zone=gmt&units=metric&application=DataAPI_Sample&format=xml";
+    const spotterApiUrl =
+      "https://api.sofarocean.com/api/sensor-data?token=9e6f543925aa67c2fccb303a90e5e5&spotterId=SPOT-31425C";
+
+    const noaaApiUrl =
+      "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?date=latest&station=8575512&product=air_pressure&datum=MLLW&time_zone=gmt&units=metric&application=DataAPI_Sample&format=xml";
+
     let noaaPressure = null;
 
     function hexToUtf8(hex) {
       try {
         const bytes = hex.match(/.{1,2}/g).map(b => parseInt(b, 16));
         return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
-      } catch (e) {
+      } catch {
         return "";
       }
     }
 
-    function parseValue(valueHex) {
-      const decoded = hexToUtf8(valueHex);
-      const [temperature, pressure] = decoded.split(',');
+    function parseValue(hexString) {
+      const decoded = hexToUtf8(hexString);
+      const [temperature, pressure] = decoded.split(",");
       return {
-        temperature: temperature ? temperature.trim() + " °C" : "N/A",
-        pressureRaw: pressure ? parseFloat(pressure.trim()) : null,
-        pressureFormatted: pressure ? pressure.trim() + " mBar" : "N/A"
+        temperature: temperature ? parseFloat(temperature.trim()) : null,
+        pressure: pressure ? parseFloat(pressure.trim()) : null
       };
     }
 
     function fetchNOAAPressure() {
       return fetch(noaaApiUrl)
-        .then(response => response.text())
-        .then(xmlText => {
-          const match = xmlText.match(/v="([\d.]+)"/);
-          noaaPressure = match ? parseFloat(match[1]) : null;
+        .then(r => r.text())
+        .then(xml => {
+          const m = xml.match(/v="([\d.]+)"/);
+          if (m) noaaPressure = parseFloat(m[1]);
         });
     }
 
     function fetchSpotterData() {
       return fetch(spotterApiUrl)
-        .then(response => response.json())
+        .then(r => r.json())
         .then(data => {
-          const entries = data.data.slice(-96); // Last 24 hours (6-min intervals)
-          const labels = [];
-          const depths = [];
+          const entries = data.data;  // ✅ all available entries
+          const depthPoints = [];
+          const tempPoints = [];
 
           entries.forEach(entry => {
-            const parsed = parseValue(entry.value || '');
-            let depth = "N/A";
+            const parsed = parseValue(entry.value || "");
+            let depthFt = null;
 
-            if (parsed.pressureRaw !== null && noaaPressure !== null) {
-              const delta = parsed.pressureRaw - noaaPressure;
-              const adjustedDepth = (delta * 0.03345) - 2.30;
-              depth = adjustedDepth.toFixed(2);
+            // ✅ Temperature
+            let temp = parsed.temperature !== null ? parsed.temperature : null;
+
+            // ✅ Depth from pressure
+            if (parsed.pressure !== null && noaaPressure !== null) {
+              const delta = parsed.pressure - noaaPressure;
+              depthFt = (delta * 0.03345) - 2.30;
             }
 
-            const timestamp = new Date(entry.timestamp);
-            const timeLabel = timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+            const t = new Date(entry.timestamp);
 
-            labels.push(timeLabel);
-            depths.push(parseFloat(depth));
+            // ✅ Screen out invalid depth
+            if (typeof depthFt === "number" && depthFt > -100 && depthFt < 50) {
+              depthPoints.push({ x: t, y: parseFloat(depthFt.toFixed(2)) });
+            }
+
+            // ✅ Temperature screening (skip null values)
+            if (typeof temp === "number" && temp > -10 && temp < 50) {
+              tempPoints.push({ x: t, y: parseFloat(temp.toFixed(2)) });
+            }
           });
 
-          return { labels, depths };
+          return { depthPoints, tempPoints };
         });
     }
 
-    function renderTideChart(labels, depths) {
-      const ctx = document.getElementById('tideChart').getContext('2d');
+    /** ✅ Multi-day night shading generator */
+    function buildNightShading(points) {
+      const annotations = [];
+      if (!points.length) return annotations;
+
+      const dates = new Set(points.map(p => moment(p.x).format("YYYY-MM-DD")));
+
+      dates.forEach(dateStr => {
+        const day = moment(dateStr);
+
+        const nightStart = day.clone().hour(18).minute(0).second(0);
+        const midnight = day.clone().hour(24).minute(0).second(0);
+        const nextMorning = day.clone().add(1, "day").hour(6).minute(0).second(0);
+
+        annotations.push({
+          type: "box",
+          xMin: nightStart,
+          xMax: midnight,
+          backgroundColor: "rgba(200,200,200,0.15)",
+          borderWidth: 0
+        });
+
+        annotations.push({
+          type: "box",
+          xMin: midnight,
+          xMax: nextMorning,
+          backgroundColor: "rgba(200,200,200,0.15)",
+          borderWidth: 0
+        });
+      });
+
+      return annotations;
+    }
+
+    function renderTideChart(depthPoints, tempPoints) {
+      const ctx = document.getElementById("tideChart").getContext("2d");
+
+      const all = depthPoints.length ? depthPoints : tempPoints;
+      const minTime = moment(all[0].x);
+      const maxTime = moment(all[all.length - 1].x);
+      const nightAnnotations = buildNightShading(all);
 
       new Chart(ctx, {
-        type: 'line',
+        type: "line",
         data: {
-          labels: labels,
-          datasets: [{
-            label: 'Estimated Depth',
-            data: depths,
-            borderColor: '#42a5f5',
-            backgroundColor: 'rgba(66, 165, 245, 0.2)',
-            fill: true,
-            tension: 0.1
-          }]
+          datasets: [
+            {
+              label: "Depth (ft)",
+              data: depthPoints,
+              borderColor: "#42a5f5",
+              backgroundColor: "rgba(66,165,245,0.2)",
+              yAxisID: "yDepth",
+              fill: true,
+              tension: 0.1
+            },
+            {
+              label: "Water Temp (°C)",
+              data: tempPoints,
+              borderColor: "red",
+              pointRadius: 0,
+              yAxisID: "yTemp",
+              fill: false,
+              tension: 0.1
+            }
+          ]
         },
+
         options: {
           responsive: true,
+          parsing: false,
+
           plugins: {
-            legend: { display: false },
-            annotation: {
-              annotations: labels
-                .map((label, index) => {
-                  const hour = parseInt(label.split(':')[0]);
-                  if (hour >= 0 && hour < 6 || hour >= 18) {
-                    return {
-                      type: 'box',
-                      xMin: index - 0.5,
-                      xMax: index + 0.5,
-                      backgroundColor: 'rgba(200,200,200,0.2)',
-                      borderWidth: 0
-                    };
-                  }
-                  return null;
-                })
-                .filter(a => a !== null)
-            }
+            legend: { display: true },
+            annotation: { annotations: nightAnnotations }
           },
+
           scales: {
             x: {
-              title: {
-                display: true,
-                text: 'Time'
-              }
-            },
-            y: {
-              title: {
-                display: true,
-                text: 'Depth from MSL (ft)'
+              type: "time",
+              min: minTime,
+              max: maxTime,
+              time: {
+                unit: "hour",
+                displayFormats: { hour: "MMM D  HH:mm" }
               },
-              beginAtZero: false
+              title: { display: true, text: "Time" }
+            },
+
+            /** ✅ Primary Y-axis (Depth) */
+            yDepth: {
+              position: "left",
+              title: { display: true, text: "Depth from MSL (ft)" }
+            },
+
+            /** ✅ Secondary Y-axis (Water Temperature) */
+            yTemp: {
+              position: "right",
+              title: { display: true, text: "Water Temperature (°C)" },
+              grid: { drawOnChartArea: false } // no grid overlap
             }
           }
         }
@@ -141,10 +203,11 @@
     }
 
     fetchNOAAPressure().then(() => {
-      fetchSpotterData().then(({ labels, depths }) => {
-        renderTideChart(labels, depths);
+      fetchSpotterData().then(({ depthPoints, tempPoints }) => {
+        renderTideChart(depthPoints, tempPoints);
       });
     });
   </script>
+
 </body>
 </html>
